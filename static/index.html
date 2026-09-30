@@ -1,1 +1,19 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火指挥部现场离线调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem;margin-right:.5rem}</style></head><body>
+<h1>山火指挥部 · 现场离线调度</h1>
+<p>断网按现场单号登记火线、风向、任务区与资源占用，回网后提交离线批次幂等合并；同单重复沿用首次结果，内容不同挂待核对；资源占用单赢家，落败方拿到占用对象与最新可用资源；写入失败回滚占用并保留批次重试；火线/风向/任务区改动后关联任务结论失效重算。</p>
+<button onclick="loadTickets()">现场单号</button>
+<button onclick="loadResources()">资源与占用</button>
+<button onclick="loadBatches()">离线批次</button>
+<button onclick="loadReviews()">待核对</button>
+<pre id="out">使用 X-Actor 和 X-Role 请求头调用接口（详见 README）。</pre>
+<script>
+const H={'X-Actor':'demo','X-Role':'viewer'};
+async function get(path){
+  const r=await fetch(path,{headers:H});
+  document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2);
+}
+function loadTickets(){return get('/api/tickets')}
+function loadResources(){return get('/api/resources')}
+function loadBatches(){return get('/api/batches')}
+function loadReviews(){return get('/api/reviews')}
+</script></body></html>

@@ -6,7 +6,7 @@ from src.http_api import make_handler
 from src.repository import Repository
 from src.service import Service
 def parse_args():
-    parser=argparse.ArgumentParser(description='山火事件指挥与离线人员调度')
+    parser=argparse.ArgumentParser(description='山火指挥现场离线批次合并与资源占用调度')
     parser.add_argument("--db",default="./data.db",help="SQLite数据库路径")
     parser.add_argument("--port",type=int,default=8319,help="HTTP端口")
     parser.add_argument("--host",default="127.0.0.1",help="监听地址")

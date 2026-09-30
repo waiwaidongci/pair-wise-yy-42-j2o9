@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Optional, Tuple
+from urllib.parse import urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
                      ValidationError)
@@ -15,7 +15,7 @@ def make_handler(service: Service, static_dir: str):
     root = Path(static_dir)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ModularHell/1.0"
+        server_version = "WildfireCommand/1.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
@@ -42,7 +42,7 @@ def make_handler(service: Service, static_dir: str):
         def _identity(self) -> Tuple[str, str]:
             return self.headers.get("X-Actor", ""), self.headers.get("X-Role", "")
 
-        def _body(self) -> Dict[str, Any]:
+        def _body(self) -> dict:
             length = int(self.headers.get("Content-Length", "0") or 0)
             if length <= 0:
                 return {}
@@ -64,39 +64,49 @@ def make_handler(service: Service, static_dir: str):
             elif isinstance(exc, PermissionDenied):
                 status = 403
             elif isinstance(exc, ConflictError):
-                status = 409
+                # 资源争用/批次待重试等冲突携带结构化上下文
+                payload = {"error": exc.__class__.__name__,
+                           "message": exc.message, "status": "conflict"}
+                if getattr(exc, "payload", None):
+                    payload.update(exc.payload)
+                self._json(409, payload)
+                return
             elif isinstance(exc, ValueError):
                 status = 422
             elif isinstance(exc, DomainError):
                 status = 400
             else:
                 status = 500
-            self._json(status, {"error": exc.__class__.__name__, "message": str(exc)})
+            self._json(status, {"error": exc.__class__.__name__,
+                                "message": str(exc)})
+
+        @staticmethod
+        def _segments(path: str):
+            return [seg for seg in path.split("/") if seg != ""]
 
         def do_GET(self) -> None:
             try:
                 path = urlparse(self.path).path
+                segs = self._segments(path)
+                actor, role = self._identity()
+                del actor
                 if path == "/health":
                     self._json(200, {"status": "ok"})
                 elif path == "/":
                     self._html(root / "index.html")
-                elif path == "/api/items":
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, {"items": service.list_items(role)})
-                elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, {"records": service.list_records(item_id, role)})
-                elif path.startswith("/api/items/"):
-                    item_id = int(path.rsplit("/", 1)[-1])
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, service.get_item(item_id, role))
-                elif path == "/api/audit":
-                    actor, role = self._identity()
-                    del actor
+                elif segs == ["api", "resources"]:
+                    self._json(200, service.list_resources(role))
+                elif segs == ["api", "tickets"]:
+                    self._json(200, {"tickets": service.list_tickets(role)})
+                elif len(segs) == 3 and segs[:2] == ["api", "tickets"]:
+                    self._json(200, service.get_ticket_view(segs[2], role))
+                elif segs == ["api", "batches"]:
+                    self._json(200, {"batches": service.list_batches(role)})
+                elif len(segs) == 3 and segs[:2] == ["api", "batches"]:
+                    self._json(200, service.get_batch_view(segs[2], role))
+                elif segs == ["api", "reviews"]:
+                    self._json(200, {"reviews": service.list_reviews(role)})
+                elif segs == ["api", "audit"]:
                     self._json(200, {"events": service.audit(role)})
                 else:
                     self._json(404, {"error": "not_found"})
@@ -106,19 +116,42 @@ def make_handler(service: Service, static_dir: str):
         def do_POST(self) -> None:
             try:
                 path = urlparse(self.path).path
+                segs = self._segments(path)
                 actor, role = self._identity()
                 body = self._body()
-                if path == "/api/items":
-                    self._json(201, service.create_item(body, actor, role))
-                elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
-                    self._json(201, service.add_record(item_id, body, actor, role))
-                elif path.startswith("/api/items/") and path.endswith("/transition"):
-                    item_id = int(path.split("/")[3])
-                    target = body.get("target")
-                    expected = body.get("expected_version")
-                    self._json(200, service.transition(
-                        item_id, target, expected, actor, role))
+                if segs == ["api", "resources"]:
+                    self._json(201, service.register_resource(body, actor, role))
+                elif segs == ["api", "tickets"]:
+                    self._json(201, service.register_ticket(body, actor, role))
+                elif (len(segs) == 4 and segs[:2] == ["api", "tickets"]
+                      and segs[3] == "occupations"):
+                    self._json(200, service.occupy(segs[2], body, actor, role))
+                elif (len(segs) == 4 and segs[:2] == ["api", "tickets"]
+                      and segs[3] == "amend"):
+                    self._json(200, service.amend_ticket(segs[2], body, actor, role))
+                elif (len(segs) == 4 and segs[:2] == ["api", "tickets"]
+                      and segs[3] == "close"):
+                    self._json(200, service.close_ticket(segs[2], actor, role))
+                elif segs == ["api", "batches"]:
+                    result = service.submit_batch(body, actor, role)
+                    # 已受理但写入失败待重试 -> 202，现场可凭batch_no下次重试
+                    self._json(202 if result.get("retryable") else 200, result)
+                elif (len(segs) == 4 and segs[:2] == ["api", "batches"]
+                      and segs[3] == "retry"):
+                    result = service.retry_batch(segs[2], actor, role)
+                    self._json(202 if result.get("retryable") else 200, result)
+                elif (len(segs) == 4 and segs[:2] == ["api", "reviews"]
+                      and segs[3] == "resolve"):
+                    self._json(200, service.resolve_review(int(segs[2]), body,
+                                                           actor, role))
+                elif (len(segs) == 4 and segs[:2] == ["api", "occupations"]
+                      and segs[3] == "release"):
+                    self._json(200, service.release_occupation(int(segs[2]), actor,
+                                                               role))
+                elif (len(segs) == 4 and segs[:2] == ["api", "tasks"]
+                      and segs[3] == "transition"):
+                    self._json(200, service.transition_task(
+                        int(segs[2]), body.get("target"), actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
