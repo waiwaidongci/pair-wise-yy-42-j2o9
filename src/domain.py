@@ -10,7 +10,16 @@ class ValidationError(DomainError): kind=ErrorKind.VALIDATION
 class NotFoundError(DomainError): kind=ErrorKind.NOT_FOUND
 class PermissionDenied(DomainError): kind=ErrorKind.FORBIDDEN
 class ConflictError(DomainError): kind=ErrorKind.CONFLICT
+class OccupancyConflictError(ConflictError):
+    """资源占用冲突：落败方拿到占用对象并重算可用资源。"""
+    def __init__(self,details):
+        super().__init__("资源占用冲突")
+        self.details=details
 SEVERITIES=['low', 'moderate', 'high', 'extreme']; STATES=['reported', 'active', 'contained', 'controlled', 'closed']; ROLES=['field_commander', 'incident_commander', 'logistics', 'viewer']
+BATCH_STATUSES=['pending', 'merging', 'merged', 'conflict', 'failed']
+TASK_STATUSES=['pending', 'active', 'done']
+OCCUPANCY_STATUSES=['active', 'released']
+REVIEW_STATUSES=['pending_review', 'reviewed', 'rejected']
 @dataclass(frozen=True)
 class Item:
     id:int; title:str; description:str; severity:str; quantity:float; threshold:float; status:str; version:int; external_ref:Optional[str]; created_by:str; created_at:str; updated_at:str
@@ -25,6 +34,12 @@ def require_text(value,field,max_length=2000):
     value=value.strip()
     if len(value)>max_length: raise ValidationError(f"{field}不能超过{max_length}个字符")
     return value
+def optional_text(value,field,max_length=2000):
+    if value is None: return ""
+    if not isinstance(value,str): raise ValidationError(f"{field}必须是字符串")
+    value=value.strip()
+    if len(value)>max_length: raise ValidationError(f"{field}不能超过{max_length}个字符")
+    return value
 def normalize_severity(value):
     if value not in SEVERITIES: raise ValidationError("severity不在允许范围内")
     return value
@@ -36,3 +51,16 @@ def require_number(value,field,minimum=0.0):
     return number
 def ensure_role(role,allowed):
     if role not in allowed: raise PermissionDenied("当前角色无权执行该操作")
+def require_positive_int(value,field):
+    if isinstance(value,bool) or not isinstance(value,int) or value<1:
+        raise ValidationError(f"{field}必须是正整数")
+    return value
+def require_in_list(value,allowed,field):
+    if value not in allowed: raise ValidationError(f"{field}不在允许范围内")
+    return value
+def require_dict(value,field):
+    if not isinstance(value,dict): raise ValidationError(f"{field}必须是JSON对象")
+    return value
+def require_list(value,field):
+    if not isinstance(value,list): raise ValidationError(f"{field}必须是数组")
+    return value
